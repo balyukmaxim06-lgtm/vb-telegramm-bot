@@ -47,28 +47,46 @@ dp = Dispatcher()
 # ============================================================
 
 def get_product_data(nm_id):
-    """Получает данные через cloudscraper (обходит блокировку Wildberries)"""
+    """Получает данные через cloudscraper с улучшенными заголовками"""
     
     scraper = cloudscraper.create_scraper()
     
-    # Пробуем разные API
+    # Улучшенные заголовки (как у реального браузера)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Connection": "keep-alive",
+        "Referer": "https://www.wildberries.by/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+    }
+    
+    # Куки как у реального пользователя
+    cookies = {
+        "locale": "ru",
+        "region": "1",
+    }
+    
     urls = [
         f"https://card.wb.ru/cards/detail?nm={nm_id}",
         f"https://catalog.wb.ru/catalog/detail/v4?nm={nm_id}",
         f"https://wbx-content-v2.wbstatic.net/ru/{nm_id}.json"
     ]
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://www.wildberries.by/"
-    }
-    
     for url in urls:
         try:
             print(f"Пробую API: {url}")
-            response = scraper.get(url, headers=headers, timeout=30)
+            response = scraper.get(
+                url, 
+                headers=headers, 
+                cookies=cookies,
+                timeout=30
+            )
             print(f"Статус: {response.status_code}")
+            print(f"Ответ: {response.text[:200]}")  # Показываем первые 200 символов
             
             if response.status_code == 200:
                 data = response.json()
