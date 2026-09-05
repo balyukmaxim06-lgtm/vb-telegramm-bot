@@ -43,7 +43,7 @@ def health():
 # Токен берём из переменной окружения Render.
 # В Render:
 # BOT_TOKEN = твой новый токен
-TOKEN = os.getenv("8818834067:AAGDaCZboIo2g-t8qTxlcpkJjjsYEf7DanQ")
+TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
     raise RuntimeError(
