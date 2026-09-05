@@ -40,7 +40,7 @@ def health():
 # ============================================================
 
 # ВСТАВЬ НОВЫЙ ТОКЕН, КОТОРЫЙ ПОЛУЧИШЬ ЧЕРЕЗ @BotFather
-TOKEN = "YOUR_NEW_BOT_TOKEN"
+TOKEN = "8818834067:AAGZFrrlXShenGh4Pb8NllTLePxjbh9RRdw"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
