@@ -43,7 +43,12 @@ def health():
 # Токен берём из переменной окружения Render.
 # В Render:
 # BOT_TOKEN = твой новый токен
-TOKEN = "8818834067:AAGDaCZboIo2g-t8qTxlcpkJjjsYEf7DanQ"
+TOKEN = os.getenv("8818834067:AAGDaCZboIo2g-t8qTxlcpkJjjsYEf7DanQ")
+
+if not TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN не задан. Добавь BOT_TOKEN в Environment Variables Render."
+    )
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -1030,5 +1035,3 @@ if __name__ == "__main__":
     # ========================================================
 
     asyncio.run(main())
-
-
