@@ -43,8 +43,8 @@ def health():
 # TELEGRAM BOT
 # ============================================================
 
-# ⚠️ ВСТАВЬ СВОЙ ТОКЕН (НОВЫЙ, СБРОШЕННЫЙ ЧЕРЕЗ @BotFather)
-TOKEN = "8818834067:AAGZFrrlXShenGh4Pb8NllTLePxjbh9RRdw"
+# ⚠️ ВСТАВЬ СВОЙ НОВЫЙ ТОКЕН (СБРОШЕННЫЙ ЧЕРЕЗ @BotFather)
+TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ОТ_BOTFATHER"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -102,24 +102,31 @@ def get_product_data(nm_id):
 
         driver.get(url)
 
+        # ====================================================
+        # УВЕЛИЧЕННОЕ ВРЕМЯ ОЖИДАНИЯ (30 секунд)
+        # ====================================================
         print("Ожидаем загрузки данных...")
         try:
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "h1, span[class*='price']"))
+            # Ждём появления элемента с ценой или названием до 30 секунд
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "h1, span[class*='price'], div[class*='product']"))
             )
-            print("Страница загружена!")
+            print("✅ Страница загружена!")
         except TimeoutException:
-            print("Страница не загрузилась за 20 секунд")
+            print("⏰ Страница не загрузилась за 30 секунд")
+            # Проверяем на капчу
             if "подозрительная активность" in driver.page_source.lower():
-                print("Обнаружена капча!")
+                print("🚫 Обнаружена капча! Бот заблокирован.")
                 return None
-            time.sleep(5)
+            # Если не капча, даём ещё 10 секунд
+            time.sleep(10)
 
+        # Прокручиваем страницу
         driver.execute_script(
             "window.scrollTo(0, document.body.scrollHeight / 2);"
         )
 
-        time.sleep(3)
+        time.sleep(5)
 
         # ====================================================
         # ПЕРЕМЕННЫЕ
