@@ -4,6 +4,7 @@ import re
 import os
 import threading
 import html
+import time
 
 import requests
 from flask import Flask
@@ -39,8 +40,15 @@ def health():
 # TELEGRAM BOT
 # ============================================================
 
-# ВСТАВЬ НОВЫЙ ТОКЕН, КОТОРЫЙ ПОЛУЧИШЬ ЧЕРЕЗ @BotFather
-TOKEN = "8818834067:AAGZFrrlXShenGh4Pb8NllTLePxjbh9RRdw"
+# Токен берём из переменной окружения Render.
+# В Render:
+# BOT_TOKEN = твой новый токен
+TOKEN = os.getenv("8818834067:AAGZFrrlXShenGh4Pb8NllTLePxjbh9RRdw")
+
+if not TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN не задан. Добавь BOT_TOKEN в Environment Variables Render."
+    )
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -69,60 +77,138 @@ HEADERS = {
 # ============================================================
 
 def normalize_article(value):
-    """
-    Оставляет только цифры в артикуле.
-    """
+    """Оставляет только цифры в артикуле."""
     value = str(value).strip()
     value = re.sub(r"\D", "", value)
     return value
 
 
+def find_value(obj, keys):
+    """
+    Ищет значение по указанным ключам.
+    Сначала проверяет текущий словарь,
+    затем рекурсивно ищет во вложенных словарях и списках.
+    """
+
+    if isinstance(obj, dict):
+
+        # Сначала проверяем текущий уровень
+        for key in keys:
+            if key in obj and obj[key] is not None:
+                value = obj[key]
+
+                # Не считаем пустые значения найденными
+                if value != "":
+                    return value
+
+        # Затем ищем внутри вложенных объектов
+        for value in obj.values():
+
+            result = find_value(value, keys)
+
+            if result is not None:
+                return result
+
+    elif isinstance(obj, list):
+
+        for item in obj:
+
+            result = find_value(item, keys)
+
+            if result is not None:
+                return result
+
+    return None
+
+
+def convert_price(value):
+    """
+    Преобразует цену WB в рубли.
+
+    У Wildberries поля с окончанием U
+    обычно передаются в сотых долях рубля.
+    """
+
+    if value is None:
+        return 0.0
+
+    try:
+        value = float(value)
+
+        if value <= 0:
+            return 0.0
+
+        return value / 100
+
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def get_price(product):
     """
-    Получает актуальную цену.
-    В API WB встречаются salePriceU и priceU.
+    Получает цену товара.
+
+    Приоритет:
+    1. salePriceU
+    2. priceU
+    3. clientPriceU
+    4. basicPriceU
     """
 
+    sale_price = find_value(
+        product,
+        [
+            "salePriceU",
+            "clientPriceU",
+            "sale_price_u"
+        ]
+    )
+
+    price = find_value(
+        product,
+        [
+            "priceU",
+            "basicPriceU",
+            "price_u"
+        ]
+    )
+
     # Сначала цена со скидкой
-    sale_price_u = product.get("salePriceU")
+    converted_sale_price = convert_price(sale_price)
 
-    if sale_price_u:
-        try:
-            return float(sale_price_u) / 100
-        except (ValueError, TypeError):
-            pass
+    if converted_sale_price > 0:
+        return converted_sale_price
 
-    # Затем обычная цена
-    price_u = product.get("priceU")
+    # Если скидочной цены нет — обычная
+    converted_price = convert_price(price)
 
-    if price_u:
-        try:
-            return float(price_u) / 100
-        except (ValueError, TypeError):
-            pass
+    if converted_price > 0:
+        return converted_price
 
-    return 0
+    return 0.0
 
 
 def get_rating(product):
     """
-    Получает рейтинг из разных возможных полей WB.
+    Получает рейтинг товара.
     """
 
-    for key in [
-        "reviewRating",
-        "rating",
-        "reviewRating"
-    ]:
-        value = product.get(key)
+    value = find_value(
+        product,
+        [
+            "rating",
+            "reviewRating"
+        ]
+    )
 
-        if value is not None:
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                pass
+    if value is None:
+        return 0.0
 
-    return 0
+    try:
+        return float(value)
+
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def get_reviews(product):
@@ -130,70 +216,139 @@ def get_reviews(product):
     Получает количество отзывов.
     """
 
-    for key in [
-        "feedbacks",
-        "feedbacksCount",
-        "reviews"
-    ]:
-        value = product.get(key)
+    value = find_value(
+        product,
+        [
+            "feedbacks",
+            "feedbacksCount",
+            "feedbackCount",
+            "reviews",
+            "reviewCount"
+        ]
+    )
 
-        if value is not None:
-            try:
-                return int(value)
-            except (ValueError, TypeError):
-                pass
+    if value is None:
+        return 0
 
-    return 0
+    try:
+        return int(float(value))
 
+    except (ValueError, TypeError):
+        return 0
+
+
+def get_text_value(product, keys, default=""):
+    """
+    Получает текстовое значение из объекта.
+    """
+
+    value = find_value(product, keys)
+
+    if value is None:
+        return default
+
+    if isinstance(value, (dict, list)):
+        return default
+
+    return str(value).strip()
+
+
+# ============================================================
+# СОЗДАНИЕ ЕДИНОГО ОБЪЕКТА ТОВАРА
+# ============================================================
 
 def build_product(product, nm_id):
-    """
-    Приводит ответ Wildberries к единому формату.
-    """
 
-    name = (
-        product.get("name")
-        or product.get("title")
-        or "Название не указано"
+    name = get_text_value(
+        product,
+        [
+            "name",
+            "title",
+            "imt_name"
+        ],
+        "Название не указано"
     )
 
-    brand = (
-        product.get("brand")
-        or product.get("brandName")
-        or "Не указан"
+    brand = get_text_value(
+        product,
+        [
+            "brand",
+            "brandName",
+            "brand_name"
+        ],
+        "Не указан"
     )
 
-    # Артикул продавца
-    vendor_code = (
-        product.get("supplierArticle")
-        or product.get("vendorCode")
-        or "Не указан"
+    vendor_code = get_text_value(
+        product,
+        [
+            "supplierArticle",
+            "vendorCode",
+            "supplier_article"
+        ],
+        "Не указан"
     )
 
-    # Категория
-    category = (
-        product.get("subjectName")
-        or product.get("category")
-        or "Не указана"
+    category = get_text_value(
+        product,
+        [
+            "subjectName",
+            "category",
+            "subject"
+        ],
+        "Не указана"
     )
 
-    # Описание
-    description = (
-        product.get("description")
-        or "Описание отсутствует"
+    description = get_text_value(
+        product,
+        [
+            "description",
+            "descr"
+        ],
+        "Описание отсутствует"
     )
+
+    price = get_price(product)
+    rating = get_rating(product)
+    reviews = get_reviews(product)
+
+    sale_percent = find_value(
+        product,
+        [
+            "salePercent",
+            "sale_percent"
+        ]
+    )
+
+    if sale_percent is None:
+        sale_percent = 0
+
+    try:
+        sale_percent = int(float(sale_percent))
+    except (ValueError, TypeError):
+        sale_percent = 0
+
+    print("-" * 60)
+    print("РАСПАРСЕННЫЕ ДАННЫЕ:")
+    print("Название:", name)
+    print("Цена:", price)
+    print("Рейтинг:", rating)
+    print("Отзывы:", reviews)
+    print("Бренд:", brand)
+    print("Артикул продавца:", vendor_code)
+    print("-" * 60)
 
     return {
-        "name": str(name).strip(),
-        "price": get_price(product),
-        "rating": get_rating(product),
-        "reviews": get_reviews(product),
-        "brand": str(brand).strip(),
-        "category": str(category).strip(),
-        "sale_percent": product.get("salePercent", 0) or 0,
-        "vendor_code": str(vendor_code).strip(),
+        "name": name,
+        "price": price,
+        "rating": rating,
+        "reviews": reviews,
+        "brand": brand,
+        "category": category,
+        "sale_percent": sale_percent,
+        "vendor_code": vendor_code,
         "stock": "Нет данных",
-        "description": str(description).strip(),
+        "description": description,
         "url": (
             f"https://www.wildberries.by/catalog/"
             f"{nm_id}/detail.aspx"
@@ -206,9 +361,6 @@ def build_product(product, nm_id):
 # ============================================================
 
 def get_from_wb_v4(nm_id):
-    """
-    Получение товара через актуальный cards/v4/detail.
-    """
 
     url = "https://card.wb.ru/cards/v4/detail"
 
@@ -224,9 +376,9 @@ def get_from_wb_v4(nm_id):
     try:
 
         print("=" * 60)
-        print("Пробуем WB API v4")
-        print("URL:", url)
+        print("ПРОБУЕМ WB API V4")
         print("Артикул:", nm_id)
+        print("URL:", url)
 
         response = requests.get(
             url,
@@ -236,31 +388,33 @@ def get_from_wb_v4(nm_id):
         )
 
         print("HTTP:", response.status_code)
-        print("Ответ:", response.text[:500])
 
         if response.status_code != 200:
+            print("Ответ сервера:")
+            print(response.text[:1000])
             return None
 
         data = response.json()
 
-        # Ожидаем:
-        # {
-        #   "data": {
-        #       "products": [...]
-        #   }
-        # }
-
+        # Основной вариант
         products = (
             data
             .get("data", {})
             .get("products", [])
         )
 
+        # Иногда products может оказаться на другом уровне
+        if not products:
+            products = data.get("products", [])
+
         if not products:
             print("API v4: products пустой")
+            print("Ответ JSON:")
+            print(str(data)[:3000])
             return None
 
-        # Ищем именно нужный nmID
+        print("Количество товаров:", len(products))
+
         selected_product = None
 
         for product in products:
@@ -275,8 +429,7 @@ def get_from_wb_v4(nm_id):
                 selected_product = product
                 break
 
-        # Если API вернул один товар,
-        # используем его
+        # Если API вернул один товар
         if selected_product is None and len(products) == 1:
             selected_product = products[0]
 
@@ -318,18 +471,6 @@ def get_from_wb_v4(nm_id):
 # ============================================================
 
 def get_from_basket(nm_id):
-    """
-    Резервный способ получения card.json.
-
-    Для WB:
-        vol  = nm_id // 100000
-        part = nm_id // 1000
-
-    Например:
-        330535596
-        vol  = 3305
-        part = 330535
-    """
 
     try:
 
@@ -339,42 +480,14 @@ def get_from_basket(nm_id):
         part = nm // 1000
 
         print("=" * 60)
-        print("Пробуем резервный basket API")
+        print("ПРОБУЕМ BASKET API")
         print("vol:", vol)
         print("part:", part)
 
-        # Пробуем несколько basket-серверов
+        # Пробуем несколько серверов
         basket_servers = [
-            "01",
-            "02",
-            "03",
-            "04",
-            "05",
-            "06",
-            "07",
-            "08",
-            "09",
-            "10",
-            "11",
-            "12",
-            "13",
-            "14",
-            "15",
-            "16",
-            "17",
-            "18",
-            "19",
-            "20",
-            "21",
-            "22",
-            "23",
-            "24",
-            "25",
-            "26",
-            "27",
-            "28",
-            "29",
-            "30"
+            f"{i:02d}"
+            for i in range(1, 31)
         ]
 
         for server in basket_servers:
@@ -387,12 +500,10 @@ def get_from_basket(nm_id):
 
             try:
 
-                print("Пробую:", url)
-
                 response = requests.get(
                     url,
                     headers=HEADERS,
-                    timeout=10
+                    timeout=8
                 )
 
                 if response.status_code != 200:
@@ -409,6 +520,7 @@ def get_from_basket(nm_id):
                     or data.get("name")
                 )
 
+                # Формируем единый объект
                 product = {
                     "name": (
                         data.get("imt_name")
@@ -419,8 +531,15 @@ def get_from_basket(nm_id):
                     "salePriceU": (
                         data.get("salePriceU")
                         or data.get("sale_price_u")
+                        or data.get("clientPriceU")
                         or data.get("priceU")
                         or data.get("price_u")
+                        or 0
+                    ),
+
+                    "priceU": (
+                        data.get("priceU")
+                        or data.get("basicPriceU")
                         or 0
                     ),
 
@@ -433,12 +552,14 @@ def get_from_basket(nm_id):
                     "feedbacks": (
                         data.get("feedbacks")
                         or data.get("feedbacksCount")
+                        or data.get("feedbackCount")
                         or 0
                     ),
 
                     "brand": (
                         data.get("brand")
                         or data.get("brandName")
+                        or data.get("selling", {}).get("brand_name")
                         or "Не указан"
                     ),
 
@@ -489,14 +610,12 @@ def get_product_data(nm_id):
 
     nm_id = normalize_article(nm_id)
 
-    # Проверяем артикул
     if not nm_id:
 
         print("Пустой артикул")
 
         return None
 
-    # Слишком короткий/длинный
     if not 4 <= len(nm_id) <= 15:
 
         print(
@@ -510,10 +629,7 @@ def get_product_data(nm_id):
     print("Артикул:", nm_id)
     print("=" * 60)
 
-    # ========================================================
     # 1. Основной API
-    # ========================================================
-
     product = get_from_wb_v4(nm_id)
 
     if product:
@@ -522,16 +638,10 @@ def get_product_data(nm_id):
 
         return product
 
-    # Небольшая пауза
-    time_sleep = 1
+    # Пауза
+    time.sleep(1)
 
-    import time
-    time.sleep(time_sleep)
-
-    # ========================================================
     # 2. Резервный API
-    # ========================================================
-
     product = get_from_basket(nm_id)
 
     if product:
@@ -539,10 +649,6 @@ def get_product_data(nm_id):
         print("Товар найден через basket API")
 
         return product
-
-    # ========================================================
-    # Ничего не найдено
-    # ========================================================
 
     print("=" * 60)
     print("ТОВАР НЕ НАЙДЕН")
@@ -559,7 +665,12 @@ def get_product_data(nm_id):
 def make_answer(product_data):
 
     name = html.escape(
-        str(product_data.get("name", "Название не указано"))
+        str(
+            product_data.get(
+                "name",
+                "Название не указано"
+            )
+        )
     )
 
     answer_text = (
@@ -584,12 +695,24 @@ def make_answer(product_data):
             f"{html.escape(str(category))}\n"
         )
 
+    # Цена
     price = product_data.get("price", 0)
 
-    answer_text += (
-        f"💰 <b>Цена:</b> "
-        f"{price:.2f} руб.\n"
-    )
+    try:
+        price = float(price)
+    except (ValueError, TypeError):
+        price = 0.0
+
+    if price > 0:
+        price_text = f"{price:,.2f}".replace(",", " ")
+        answer_text += (
+            f"💰 <b>Цена:</b> "
+            f"{price_text} руб.\n"
+        )
+    else:
+        answer_text += (
+            "💰 <b>Цена:</b> нет данных\n"
+        )
 
     sale = product_data.get(
         "sale_percent",
@@ -762,7 +885,7 @@ async def check_product(
             disable_web_page_preview=True
         )
 
-    except Exception as e:
+    except Exception:
 
         logging.exception(
             "Ошибка команды /check"
@@ -783,9 +906,7 @@ async def auto_check(
     message: types.Message
 ):
 
-    # Если это не текст
     if not message.text:
-
         return
 
     text = message.text.strip()
@@ -797,7 +918,6 @@ async def auto_check(
     )
 
     if not match:
-
         return
 
     nm_id = match.group(1)
@@ -836,7 +956,7 @@ async def auto_check(
             disable_web_page_preview=True
         )
 
-    except Exception as e:
+    except Exception:
 
         logging.exception(
             "Ошибка автоматического поиска"
@@ -902,7 +1022,6 @@ if __name__ == "__main__":
             host="0.0.0.0",
             port=port
         )
-
 
     flask_thread = threading.Thread(
         target=run_flask,
