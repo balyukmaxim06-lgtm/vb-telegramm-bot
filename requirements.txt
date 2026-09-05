@@ -2,3 +2,4 @@ aiogram
 selenium
 webdriver-manager
 flask
+cloudscraper
