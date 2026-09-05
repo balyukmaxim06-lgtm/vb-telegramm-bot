@@ -57,8 +57,12 @@ dp = Dispatcher()
 def get_product_data(nm_id):
     """Получает расширенные данные товара с Wildberries.by"""
 
-    options = Options()
-
+     options = Options()
+    
+    # ПРОКСИ (вставь сюда свой)
+    PROXY = "5.129.228.92"  # Замени на рабочий прокси
+    options.add_argument(f"--proxy-server=http://{PROXY}")
+    
     options.add_argument("--headless=new")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
@@ -66,7 +70,6 @@ def get_product_data(nm_id):
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-gpu")
     options.add_argument("--lang=ru")
-
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
