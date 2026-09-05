@@ -194,6 +194,22 @@ def build_product(product, nm_id):
     """
     Приводит ответ Wildberries к единому формату.
     """
+    
+    # ========================================================
+    # ОТЛАДКА: выводим ВСЕ ключи объекта
+    # ========================================================
+    print("=" * 60)
+    print("ВСЕ КЛЮЧИ В ОБЪЕКТЕ ТОВАРА:")
+    if isinstance(product, dict):
+        for key in product.keys():
+            value = product[key]
+            if isinstance(value, dict):
+                print(f"  {key}: (dict) {list(value.keys())[:5]}...")
+            elif isinstance(value, list):
+                print(f"  {key}: (list) длина {len(value)}")
+            else:
+                print(f"  {key}: {type(value).__name__} = {str(value)[:50]}")
+    print("=" * 60)
 
     name = (
         product.get("name")
@@ -243,6 +259,7 @@ def build_product(product, nm_id):
             f"{nm_id}/detail.aspx"
         )
     }
+
 
 
 # ============================================================
