@@ -78,119 +78,53 @@ def normalize_article(value):
 
 
 def get_price(product):
-    """
-    Получает актуальную цену.
-    Ищет во всех возможных полях.
-    """
+    """Получает цену товара из всех возможных полей."""
     
-    # Список всех возможных полей с ценой
+    # Прямые поля с ценой
     price_fields = [
-        "salePriceU",
-        "clientPriceU",
-        "sale_price_u",
-        "priceU",
-        "basicPriceU",
-        "price_u",
-        "price",
-        "PriceU",
-        "SalePriceU",
-        "ClientPriceU"
+        "salePriceU", "clientPriceU", "sale_price_u",
+        "priceU", "basicPriceU", "price_u",
+        "price", "PriceU", "SalePriceU"
     ]
     
-    # Проверяем все поля
+    # Ищем в прямых полях
     for field in price_fields:
         value = product.get(field)
         if value is not None and value != "":
-            try:
-                price = float(value)
-                if price > 0:
-                    # Если цена > 1000 — это копейки (делим на 100)
-                    # Если цена < 1000 — это рубли (не делим)
-                    if price > 1000:
-                        return price / 100
-                    else:
-                        return price
-            except (ValueError, TypeError):
-                continue
+            price = convert_price(value)
+            if price > 0:
+                print(f"💰 Цена найдена в поле {field}: {price}")
+                return price
     
-    # Если не нашли — проверяем вложенные объекты
+    # Рекурсивный поиск во вложенных объектах
     for key, value in product.items():
         if isinstance(value, dict):
             result = get_price(value)
             if result > 0:
+                print(f"💰 Цена найдена во вложенном объекте {key}: {result}")
                 return result
     
-    return 0
+    return 0.0
 
 def get_rating(product):
-    """
-    Получает рейтинг из всех возможных полей.
-    """
-    
-    # Все возможные поля с рейтингом
-    rating_fields = [
-        "rating",
-        "reviewRating",
-        "Rating",
-        "ReviewRating",
-        "review_rating"
-    ]
-    
-    # Проверяем все поля
-    for field in rating_fields:
-        value = product.get(field)
-        if value is not None:
-            try:
-                rating = float(value)
-                if rating > 0:
-                    return rating
-            except (ValueError, TypeError):
-                continue
-    
-    # Проверяем вложенные объекты
-    for key, value in product.items():
-        if isinstance(value, dict):
-            result = get_rating(value)
-            if result > 0:
-                return result
-    
-    return 0
+    value = find_value(product, ["rating", "reviewRating"])
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return 0.0
+
 
 
 def get_reviews(product):
-    """
-    Получает количество отзывов из всех возможных полей.
-    """
-    
-    # Все возможные поля с отзывами
-    reviews_fields = [
-        "feedbacks",
-        "feedbacksCount",
-        "feedbackCount",
-        "reviews",
-        "reviewCount",
-        "Feedbacks",
-        "Reviews"
-    ]
-    
-    # Проверяем все поля
-    for field in reviews_fields:
-        value = product.get(field)
-        if value is not None:
-            try:
-                reviews = int(float(value))
-                if reviews > 0:
-                    return reviews
-            except (ValueError, TypeError):
-                continue
-    
-    # Проверяем вложенные объекты
-    for key, value in product.items():
-        if isinstance(value, dict):
-            result = get_reviews(value)
-            if result > 0:
-                return result
-    
+    value = find_value(product, ["feedbacks", "feedbacksCount", "feedbackCount", "reviews", "reviewCount"])
+    if value is None:
+        return 0
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        return 0
 
 
 def build_product(product, nm_id):
