@@ -57,11 +57,11 @@ dp = Dispatcher()
 def get_product_data(nm_id):
     """Получает расширенные данные товара с Wildberries.by"""
 
-     options = Options()
+    options = Options()
     
-    # ПРОКСИ (вставь сюда свой)
-    PROXY = "5.129.228.92"  # Замени на рабочий прокси
-    options.add_argument(f"--proxy-server=http://{PROXY}")
+    # === ПРОКСИ (раскомментируй, если нужно) ===
+    # PROXY = "124.41.241.238:80"  # Замени на рабочий прокси
+    # options.add_argument(f"--proxy-server=http://{PROXY}")
     
     options.add_argument("--headless=new")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -106,30 +106,26 @@ def get_product_data(nm_id):
         driver.get(url)
 
         # ====================================================
-        # УВЕЛИЧЕННОЕ ВРЕМЯ ОЖИДАНИЯ (30 секунд)
+        # УВЕЛИЧЕННОЕ ВРЕМЯ ОЖИДАНИЯ (45 секунд)
         # ====================================================
         print("Ожидаем загрузки данных...")
         try:
-            # Ждём появления элемента с ценой или названием до 30 секунд
-            WebDriverWait(driver, 30).until(
+            WebDriverWait(driver, 45).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "h1, span[class*='price'], div[class*='product']"))
             )
             print("✅ Страница загружена!")
         except TimeoutException:
-            print("⏰ Страница не загрузилась за 30 секунд")
-            # Проверяем на капчу
+            print("⏰ Страница не загрузилась за 45 секунд")
             if "подозрительная активность" in driver.page_source.lower():
                 print("🚫 Обнаружена капча! Бот заблокирован.")
                 return None
-            # Если не капча, даём ещё 10 секунд
-            time.sleep(30)
+            time.sleep(10)
 
-        # Прокручиваем страницу
         driver.execute_script(
             "window.scrollTo(0, document.body.scrollHeight / 2);"
         )
 
-        time.sleep(15)
+        time.sleep(5)
 
         # ====================================================
         # ПЕРЕМЕННЫЕ
@@ -688,7 +684,7 @@ async def check_product(message: types.Message):
 
     await message.answer(
         "🔎 Ищу товар...\n"
-        "⏳ Это займёт примерно 15-20 секунд."
+        "⏳ Это займёт примерно 20-30 секунд."
     )
 
     try:
@@ -787,7 +783,7 @@ async def auto_check(message: types.Message):
 
     await message.answer(
         f"🔎 Автоматически распознал артикул: {nm_id}\n"
-        "⏳ Ищу товар... (это займёт 15-20 секунд)"
+        "⏳ Ищу товар... (это займёт 20-30 секунд)"
     )
 
     try:
