@@ -14,9 +14,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -54,11 +51,11 @@ dp = Dispatcher()
 
 
 # ============================================================
-# ПОЛУЧЕНИЕ ДАННЫХ ЧЕРЕЗ SELENIUM (С СОХРАНЕНИЕМ HTML)
+# ПОЛУЧЕНИЕ ДАННЫХ ЧЕРЕЗ SELENIUM
 # ============================================================
 
 def get_product_data(nm_id):
-    """Получает данные товара через Selenium с сохранением HTML для отладки"""
+    """Получает данные товара через Selenium с отладкой"""
     
     options = Options()
     # Убираем headless для обхода блокировки
@@ -92,27 +89,35 @@ def get_product_data(nm_id):
         })
         
         url = f"https://www.wildberries.by/catalog/{nm_id}/detail.aspx"
-        print(f"Загружаем {url}...")
+        print(f"ЗАГРУЖАЕМ: {url}")
         driver.get(url)
         
-        # Ждём загрузки страницы (до 30 секунд)
-        print("Ожидаем загрузки данных...")
-        time.sleep(10)  # Даём время на полную загрузку
+        print("ОЖИДАЕМ ЗАГРУЗКИ (10 секунд)...")
+        time.sleep(10)
         
         # === СОХРАНЯЕМ HTML ДЛЯ ОТЛАДКИ ===
         html_content = driver.page_source
-        with open(f"debug_{nm_id}.html", "w", encoding="utf-8") as f:
+        filename = f"debug_{nm_id}.html"
+        with open(filename, "w", encoding="utf-8") as f:
             f.write(html_content)
-        print(f"✅ HTML сохранён в debug_{nm_id}.html")
-        print(f"📄 Длина HTML: {len(html_content)} символов")
         
-        # Проверяем, не появилась ли капча
+        print(f"✅ HTML СОХРАНЁН: {filename}")
+        print(f"📄 РАЗМЕР HTML: {len(html_content)} символов")
+        
+        # Проверяем, есть ли признаки блокировки
         if "подозрительная активность" in html_content.lower():
-            print("🚫 Обнаружена капча! Бот заблокирован.")
+            print("🚫 ОБНАРУЖЕНА КАПЧА!")
             return None
         
         if "пожалуйста, подождите" in html_content.lower():
-            print("🚫 Обнаружена страница с ожиданием!")
+            print("🚫 ОБНАРУЖЕНА СТРАНИЦА С ОЖИДАНИЕМ!")
+            return None
+        
+        # Проверяем, есть ли название товара
+        if "название" not in html_content.lower() and "товар" not in html_content.lower():
+            print("⚠️ НА СТРАНИЦЕ НЕТ ДАННЫХ О ТОВАРЕ")
+            # Показываем первые 500 символов HTML
+            print(f"📄 ПЕРВЫЕ 500 СИМВОЛОВ HTML:\n{html_content[:500]}")
             return None
 
         # Прокручиваем страницу
@@ -128,7 +133,7 @@ def get_product_data(nm_id):
         try:
             name_element = driver.find_element(By.CSS_SELECTOR, "h1")
             name = name_element.text.strip()
-            print(f"✅ Найдено название: {name}")
+            print(f"✅ НАЗВАНИЕ: {name}")
         except Exception as e:
             print(f"❌ Ошибка поиска названия: {e}")
 
@@ -144,7 +149,7 @@ def get_product_data(nm_id):
                     try:
                         price = float(cleaned)
                         if price > 0:
-                            print(f"✅ Найдена цена: {price}")
+                            print(f"✅ ЦЕНА: {price}")
                             break
                     except:
                         continue
@@ -159,7 +164,7 @@ def get_product_data(nm_id):
                 text = rating_elements[0].text.strip()
                 if text:
                     rating = float(text.replace(',', '.'))
-                    print(f"✅ Найден рейтинг: {rating}")
+                    print(f"✅ РЕЙТИНГ: {rating}")
         except Exception as e:
             print(f"❌ Ошибка поиска рейтинга: {e}")
 
@@ -173,7 +178,7 @@ def get_product_data(nm_id):
                     reviews_text = re.sub(r'\D', '', text)
                     if reviews_text:
                         reviews = int(reviews_text)
-                        print(f"✅ Найдено отзывов: {reviews}")
+                        print(f"✅ ОТЗЫВОВ: {reviews}")
         except Exception as e:
             print(f"❌ Ошибка поиска отзывов: {e}")
 
@@ -183,7 +188,7 @@ def get_product_data(nm_id):
             brand_elements = driver.find_elements(By.CSS_SELECTOR, "span[class*='brand']")
             if brand_elements:
                 brand = brand_elements[0].text.strip()
-                print(f"✅ Найден бренд: {brand}")
+                print(f"✅ БРЕНД: {brand}")
         except Exception as e:
             print(f"❌ Ошибка поиска бренда: {e}")
 
@@ -195,7 +200,7 @@ def get_product_data(nm_id):
                 text = el.text.strip()
                 if text and len(text) > 20:
                     description = text
-                    print(f"✅ Найдено описание: {description[:100]}...")
+                    print(f"✅ ОПИСАНИЕ: {description[:100]}...")
                     break
         except Exception as e:
             print(f"❌ Ошибка поиска описания: {e}")
@@ -206,7 +211,7 @@ def get_product_data(nm_id):
             category_elements = driver.find_elements(By.CSS_SELECTOR, "ol[class*='breadcrumb'] li")
             if category_elements:
                 category = category_elements[-1].text.strip()
-                print(f"✅ Найдена категория: {category}")
+                print(f"✅ КАТЕГОРИЯ: {category}")
         except Exception as e:
             print(f"❌ Ошибка поиска категории: {e}")
 
@@ -216,9 +221,18 @@ def get_product_data(nm_id):
             vendor_elements = driver.find_elements(By.CSS_SELECTOR, "span[class*='vendor']")
             if vendor_elements:
                 vendor_code = vendor_elements[0].text.strip()
-                print(f"✅ Найден артикул продавца: {vendor_code}")
+                print(f"✅ АРТИКУЛ ПРОДАВЦА: {vendor_code}")
         except Exception as e:
             print(f"❌ Ошибка поиска артикула: {e}")
+
+        print("=" * 60)
+        print("РЕЗУЛЬТАТ ПАРСИНГА:")
+        print(f"Название: {name}")
+        print(f"Цена: {price}")
+        print(f"Рейтинг: {rating}")
+        print(f"Отзывы: {reviews}")
+        print(f"Бренд: {brand}")
+        print("=" * 60)
 
         return {
             "name": name,
@@ -235,7 +249,7 @@ def get_product_data(nm_id):
         }
 
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ ОШИБКА: {e}")
         return None
     finally:
         driver.quit()
