@@ -44,7 +44,7 @@ def health():
 # ============================================================
 
 # ⚠️ ВСТАВЬ СВОЙ ТОКЕН (НОВЫЙ, СБРОШЕННЫЙ ЧЕРЕЗ @BotFather)
-TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ОТ_BOTFATHER"
+TOKEN = "8818834067:AAFfttu2b6OniulXBlKy0QBkRFe8C4ZjMIQ"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
