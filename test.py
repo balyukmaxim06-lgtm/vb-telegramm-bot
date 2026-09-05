@@ -3,7 +3,10 @@ import logging
 import json
 import time
 import re
+import os
+import threading
 
+from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
@@ -17,15 +20,31 @@ from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
+# ============================================================
+# LOGGING
+# ============================================================
+
 logging.basicConfig(level=logging.INFO)
+
+
+# ============================================================
+# FLASK APP (для Render)
+# ============================================================
+
+web_app = Flask(__name__)
+
+@web_app.route('/')
+@web_app.route('/health')
+def health():
+    return "✅ Bot is running!", 200
 
 
 # ============================================================
 # TELEGRAM BOT
 # ============================================================
 
-# ⚠️ ВСТАВЬ СВОЙ ТОКЕН
-TOKEN = "8818834067:AAFfttu2b6OniulXBlKy0QBkRFe8C4ZjMIQ"
+# ⚠️ ВСТАВЬ СВОЙ ТОКЕН (НОВЫЙ, СБРОШЕННЫЙ ЧЕРЕЗ @BotFather)
+TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ОТ_BOTFATHER"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -65,6 +84,7 @@ def get_product_data(nm_id):
 
     try:
 
+        # Скрываем webdriver
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
             {
@@ -745,29 +765,21 @@ async def check_product(message: types.Message):
 
 @dp.message()
 async def auto_check(message: types.Message):
-    """
-    Если пользователь пишет число (или набор цифр) — 
-    бот автоматически запускает анализ.
-    """
-    
+
     text = message.text.strip()
-    
-    # Проверяем, есть ли в сообщении число (артикул)
-    # Ищем первое число от 4 до 15 цифр (артикулы WB обычно 5-10 цифр)
+
     match = re.search(r'\b(\d{4,15})\b', text)
-    
+
     if not match:
-        # Если числа нет — просто игнорируем
         return
-    
+
     nm_id = match.group(1)
-    
-    # Отправляем сообщение о начале поиска
+
     await message.answer(
         f"🔎 Автоматически распознал артикул: {nm_id}\n"
         "⏳ Ищу товар... (это займёт 15-20 секунд)"
     )
-    
+
     try:
         loop = asyncio.get_event_loop()
         product_data = await loop.run_in_executor(
@@ -775,58 +787,57 @@ async def auto_check(message: types.Message):
             get_product_data,
             nm_id
         )
-        
+
         if not product_data:
             await message.answer(
                 "❌ Товар не найден.\n"
                 "Проверь артикул."
             )
             return
-            
+
         if product_data["price"] == 0 and product_data["name"] == "Название не найдено":
             await message.answer(
                 "❌ Не удалось найти данные на странице.\n"
                 "Попробуй позже."
             )
             return
-        
-        # Формируем ответ (такой же, как в /check)
+
         answer_text = f"📦 <b>{product_data['name']}</b>\n\n"
-        
+
         if product_data.get('brand') and product_data['brand'] != "Не указан":
             answer_text += f"🏷️ <b>Бренд:</b> {product_data['brand']}\n"
-        
+
         if product_data.get('category') and product_data['category'] != "Не указана":
             answer_text += f"📂 <b>Категория:</b> {product_data['category']}\n"
-        
+
         answer_text += f"💰 <b>Цена:</b> {product_data['price']:.2f} руб.\n"
-        
+
         if product_data.get('sale_percent', 0) > 0:
             answer_text += f"🔥 <b>Скидка:</b> {product_data['sale_percent']}%\n"
-        
+
         if product_data.get('vendor_code') and product_data['vendor_code'] != "Не указан":
             answer_text += f"🔢 <b>Артикул продавца:</b> {product_data['vendor_code']}\n"
-        
+
         answer_text += f"⭐ <b>Рейтинг:</b> {product_data['rating']}\n"
         answer_text += f"📝 <b>Отзывов:</b> {product_data['reviews']}\n"
-        
+
         if product_data.get('stock') and product_data['stock'] != "Нет данных":
             answer_text += f"📦 <b>Наличие:</b> {product_data['stock']}\n"
-        
+
         if product_data.get('description') and product_data['description'] != "Описание отсутствует":
             desc = product_data['description']
             if len(desc) > 200:
                 desc = desc[:200] + "..."
             answer_text += f"\n📄 <b>Описание:</b>\n{desc}\n"
-        
+
         answer_text += f"\n🔗 <a href='{product_data['url']}'>Открыть на Wildberries</a>"
-        
+
         await message.answer(
             answer_text,
             parse_mode="HTML",
             disable_web_page_preview=True
         )
-        
+
     except Exception as e:
         await message.answer(f"❌ Ошибка: {str(e)}")
 
@@ -836,16 +847,20 @@ async def auto_check(message: types.Message):
 # ============================================================
 
 async def main():
-
     print("🚀 Бот запускается...")
     print("📌 Отправь артикул (число) или /check 12345678")
-
-    await bot.delete_webhook(
-        drop_pending_updates=True
-    )
-
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
+    # Запускаем Flask в отдельном потоке для Render
+    def run_flask():
+        port = int(os.environ.get("PORT", 8080))
+        web_app.run(host="0.0.0.0", port=port)
+    
+    thread = threading.Thread(target=run_flask)
+    thread.start()
+    
+    # Запускаем бота
     asyncio.run(main())
