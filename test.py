@@ -119,14 +119,14 @@ def get_product_data(nm_id):
                 print("🚫 Обнаружена капча! Бот заблокирован.")
                 return None
             # Если не капча, даём ещё 10 секунд
-            time.sleep(10)
+            time.sleep(30)
 
         # Прокручиваем страницу
         driver.execute_script(
             "window.scrollTo(0, document.body.scrollHeight / 2);"
         )
 
-        time.sleep(5)
+        time.sleep(15)
 
         # ====================================================
         # ПЕРЕМЕННЫЕ
