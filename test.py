@@ -54,14 +54,16 @@ dp = Dispatcher()
 
 
 # ============================================================
-# ПОЛУЧЕНИЕ ДАННЫХ ЧЕРЕЗ SELENIUM
+# ПОЛУЧЕНИЕ ДАННЫХ ЧЕРЕЗ SELENIUM (БЕЗ HEADLESS)
 # ============================================================
 
 def get_product_data(nm_id):
-    """Получает данные товара через Selenium (реальный браузер)"""
+    """Получает данные товара через Selenium (с открытым браузером)"""
     
     options = Options()
-    options.add_argument("--headless=new")
+    # ⚠️ Убираем headless — Wildberries блокирует его
+    # options.add_argument("--headless=new")
+    
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -102,6 +104,10 @@ def get_product_data(nm_id):
             print("✅ Страница загружена!")
         except TimeoutException:
             print("⏰ Страница не загрузилась за 30 секунд")
+            # Сохраняем HTML для отладки
+            with open(f"debug_{nm_id}.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            print(f"✅ HTML сохранён в debug_{nm_id}.html")
             return None
 
         # Прокручиваем страницу
@@ -128,7 +134,6 @@ def get_product_data(nm_id):
             for el in price_elements:
                 text = el.text.strip()
                 if text and any(c.isdigit() for c in text):
-                    # Извлекаем число
                     cleaned = re.sub(r'[^\d.,]', '', text)
                     cleaned = cleaned.replace(',', '.')
                     try:
