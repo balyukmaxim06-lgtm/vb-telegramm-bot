@@ -43,7 +43,7 @@ def health():
 # Токен берём из переменной окружения Render.
 # В Render:
 # BOT_TOKEN = твой новый токен
-TOKEN = "8818834067:AAGZFrr1XShenGh4Pb8N11TLePxjbh9RRdw"
+TOKEN = "8818834067:AAGDaCZboIo2g-t8qTxlcpkJjjsYEf7DanQ"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
