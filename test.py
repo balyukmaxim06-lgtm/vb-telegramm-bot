@@ -55,7 +55,7 @@ dp = Dispatcher()
 # ============================================================
 
 def get_product_data(nm_id):
-    """Получает данные товара через Selenium с отладкой"""
+    """Получает данные товара через Selenium с выводом в лог"""
     
     options = Options()
     # Убираем headless для обхода блокировки
@@ -92,17 +92,18 @@ def get_product_data(nm_id):
         print(f"ЗАГРУЖАЕМ: {url}")
         driver.get(url)
         
-        print("ОЖИДАЕМ ЗАГРУЗКИ (10 секунд)...")
-        time.sleep(10)
+        print("ОЖИДАЕМ ЗАГРУЗКИ (15 секунд)...")
+        time.sleep(15)
         
-        # === СОХРАНЯЕМ HTML ДЛЯ ОТЛАДКИ ===
+        # === ПОЛУЧАЕМ HTML ===
         html_content = driver.page_source
-        filename = f"debug_{nm_id}.html"
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(html_content)
         
-        print(f"✅ HTML СОХРАНЁН: {filename}")
-        print(f"📄 РАЗМЕР HTML: {len(html_content)} символов")
+        # === ВЫВОДИМ В ЛОГ ===
+        print("=" * 60)
+        print("HTML СТРАНИЦЫ (первые 2000 символов):")
+        print(html_content[:2000])
+        print("=" * 60)
+        print(f"ДЛИНА HTML: {len(html_content)} символов")
         
         # Проверяем, есть ли признаки блокировки
         if "подозрительная активность" in html_content.lower():
@@ -111,13 +112,6 @@ def get_product_data(nm_id):
         
         if "пожалуйста, подождите" in html_content.lower():
             print("🚫 ОБНАРУЖЕНА СТРАНИЦА С ОЖИДАНИЕМ!")
-            return None
-        
-        # Проверяем, есть ли название товара
-        if "название" not in html_content.lower() and "товар" not in html_content.lower():
-            print("⚠️ НА СТРАНИЦЕ НЕТ ДАННЫХ О ТОВАРЕ")
-            # Показываем первые 500 символов HTML
-            print(f"📄 ПЕРВЫЕ 500 СИМВОЛОВ HTML:\n{html_content[:500]}")
             return None
 
         # Прокручиваем страницу
