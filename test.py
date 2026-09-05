@@ -1,136 +1,676 @@
 import asyncio
 import logging
-import json
-import time
 import re
 import os
 import threading
+import html
 
+import requests
 from flask import Flask
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-import cloudscraper
 
 
 # ============================================================
 # LOGGING
 # ============================================================
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 # ============================================================
-# FLASK APP (для Render)
+# FLASK APP FOR RENDER
 # ============================================================
 
 web_app = Flask(__name__)
 
-@web_app.route('/')
-@web_app.route('/health')
+
+@web_app.route("/")
+@web_app.route("/health")
 def health():
-    return "✅ Bot is running!", 200
+    return "Bot is running!", 200
 
 
 # ============================================================
 # TELEGRAM BOT
 # ============================================================
 
-# ⚠️ ВСТАВЬ СВОЙ НОВЫЙ ТОКЕН (СБРОШЕННЫЙ ЧЕРЕЗ @BotFather)
-TOKEN = "8818834067:AAGZFrrlXShenGh4Pb8NllTLePxjbh9RRdw"
+# ВСТАВЬ НОВЫЙ ТОКЕН, КОТОРЫЙ ПОЛУЧИШЬ ЧЕРЕЗ @BotFather
+TOKEN = "YOUR_NEW_BOT_TOKEN"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 
 # ============================================================
-# ПОЛУЧЕНИЕ ДАННЫХ ТОВАРА (через cloudscraper)
+# HEADERS
+# ============================================================
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://www.wildberries.by/",
+    "Origin": "https://www.wildberries.by",
+    "Connection": "keep-alive",
+}
+
+
+# ============================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
+
+def normalize_article(value):
+    """
+    Оставляет только цифры в артикуле.
+    """
+    value = str(value).strip()
+    value = re.sub(r"\D", "", value)
+    return value
+
+
+def get_price(product):
+    """
+    Получает актуальную цену.
+    В API WB встречаются salePriceU и priceU.
+    """
+
+    # Сначала цена со скидкой
+    sale_price_u = product.get("salePriceU")
+
+    if sale_price_u:
+        try:
+            return float(sale_price_u) / 100
+        except (ValueError, TypeError):
+            pass
+
+    # Затем обычная цена
+    price_u = product.get("priceU")
+
+    if price_u:
+        try:
+            return float(price_u) / 100
+        except (ValueError, TypeError):
+            pass
+
+    return 0
+
+
+def get_rating(product):
+    """
+    Получает рейтинг из разных возможных полей WB.
+    """
+
+    for key in [
+        "reviewRating",
+        "rating",
+        "reviewRating"
+    ]:
+        value = product.get(key)
+
+        if value is not None:
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                pass
+
+    return 0
+
+
+def get_reviews(product):
+    """
+    Получает количество отзывов.
+    """
+
+    for key in [
+        "feedbacks",
+        "feedbacksCount",
+        "reviews"
+    ]:
+        value = product.get(key)
+
+        if value is not None:
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                pass
+
+    return 0
+
+
+def build_product(product, nm_id):
+    """
+    Приводит ответ Wildberries к единому формату.
+    """
+
+    name = (
+        product.get("name")
+        or product.get("title")
+        or "Название не указано"
+    )
+
+    brand = (
+        product.get("brand")
+        or product.get("brandName")
+        or "Не указан"
+    )
+
+    # Артикул продавца
+    vendor_code = (
+        product.get("supplierArticle")
+        or product.get("vendorCode")
+        or "Не указан"
+    )
+
+    # Категория
+    category = (
+        product.get("subjectName")
+        or product.get("category")
+        or "Не указана"
+    )
+
+    # Описание
+    description = (
+        product.get("description")
+        or "Описание отсутствует"
+    )
+
+    return {
+        "name": str(name).strip(),
+        "price": get_price(product),
+        "rating": get_rating(product),
+        "reviews": get_reviews(product),
+        "brand": str(brand).strip(),
+        "category": str(category).strip(),
+        "sale_percent": product.get("salePercent", 0) or 0,
+        "vendor_code": str(vendor_code).strip(),
+        "stock": "Нет данных",
+        "description": str(description).strip(),
+        "url": (
+            f"https://www.wildberries.by/catalog/"
+            f"{nm_id}/detail.aspx"
+        )
+    }
+
+
+# ============================================================
+# ОСНОВНОЙ API WILDBERRIES
+# ============================================================
+
+def get_from_wb_v4(nm_id):
+    """
+    Получение товара через актуальный cards/v4/detail.
+    """
+
+    url = "https://card.wb.ru/cards/v4/detail"
+
+    params = {
+        "appType": 1,
+        "curr": "rub",
+        "dest": "-1257786",
+        "spp": 30,
+        "lang": "ru",
+        "nm": nm_id
+    }
+
+    try:
+
+        print("=" * 60)
+        print("Пробуем WB API v4")
+        print("URL:", url)
+        print("Артикул:", nm_id)
+
+        response = requests.get(
+            url,
+            params=params,
+            headers=HEADERS,
+            timeout=20
+        )
+
+        print("HTTP:", response.status_code)
+        print("Ответ:", response.text[:500])
+
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+
+        # Ожидаем:
+        # {
+        #   "data": {
+        #       "products": [...]
+        #   }
+        # }
+
+        products = (
+            data
+            .get("data", {})
+            .get("products", [])
+        )
+
+        if not products:
+            print("API v4: products пустой")
+            return None
+
+        # Ищем именно нужный nmID
+        selected_product = None
+
+        for product in products:
+
+            product_id = (
+                product.get("id")
+                or product.get("nmId")
+                or product.get("nmID")
+            )
+
+            if str(product_id) == str(nm_id):
+                selected_product = product
+                break
+
+        # Если API вернул один товар,
+        # используем его
+        if selected_product is None and len(products) == 1:
+            selected_product = products[0]
+
+        if selected_product is None:
+            print("Нужный товар не найден среди products")
+            return None
+
+        print(
+            "Найден товар:",
+            selected_product.get("name")
+        )
+
+        return build_product(
+            selected_product,
+            nm_id
+        )
+
+    except requests.RequestException as e:
+
+        print("Ошибка HTTP:", e)
+
+        return None
+
+    except ValueError as e:
+
+        print("Ошибка JSON:", e)
+
+        return None
+
+    except Exception as e:
+
+        print("Ошибка API v4:", e)
+
+        return None
+
+
+# ============================================================
+# ЗАПАСНОЙ API ЧЕРЕЗ WB BASKET
+# ============================================================
+
+def get_from_basket(nm_id):
+    """
+    Резервный способ получения card.json.
+
+    Для WB:
+        vol  = nm_id // 100000
+        part = nm_id // 1000
+
+    Например:
+        330535596
+        vol  = 3305
+        part = 330535
+    """
+
+    try:
+
+        nm = int(nm_id)
+
+        vol = nm // 100000
+        part = nm // 1000
+
+        print("=" * 60)
+        print("Пробуем резервный basket API")
+        print("vol:", vol)
+        print("part:", part)
+
+        # Пробуем несколько basket-серверов
+        basket_servers = [
+            "01",
+            "02",
+            "03",
+            "04",
+            "05",
+            "06",
+            "07",
+            "08",
+            "09",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16",
+            "17",
+            "18",
+            "19",
+            "20",
+            "21",
+            "22",
+            "23",
+            "24",
+            "25",
+            "26",
+            "27",
+            "28",
+            "29",
+            "30"
+        ]
+
+        for server in basket_servers:
+
+            url = (
+                f"https://basket-{server}.wbbasket.ru/"
+                f"vol{vol}/part{part}/{nm_id}/"
+                f"info/ru/card.json"
+            )
+
+            try:
+
+                print("Пробую:", url)
+
+                response = requests.get(
+                    url,
+                    headers=HEADERS,
+                    timeout=10
+                )
+
+                if response.status_code != 200:
+                    continue
+
+                data = response.json()
+
+                if not data:
+                    continue
+
+                print(
+                    "Basket API найден:",
+                    data.get("imt_name")
+                    or data.get("name")
+                )
+
+                product = {
+                    "name": (
+                        data.get("imt_name")
+                        or data.get("name")
+                        or "Название не указано"
+                    ),
+
+                    "salePriceU": (
+                        data.get("salePriceU")
+                        or data.get("sale_price_u")
+                        or data.get("priceU")
+                        or data.get("price_u")
+                        or 0
+                    ),
+
+                    "reviewRating": (
+                        data.get("reviewRating")
+                        or data.get("rating")
+                        or 0
+                    ),
+
+                    "feedbacks": (
+                        data.get("feedbacks")
+                        or data.get("feedbacksCount")
+                        or 0
+                    ),
+
+                    "brand": (
+                        data.get("brand")
+                        or data.get("brandName")
+                        or "Не указан"
+                    ),
+
+                    "supplierArticle": (
+                        data.get("supplierArticle")
+                        or data.get("vendorCode")
+                        or "Не указан"
+                    ),
+
+                    "subjectName": (
+                        data.get("subjectName")
+                        or "Не указана"
+                    ),
+
+                    "description": (
+                        data.get("description")
+                        or "Описание отсутствует"
+                    )
+                }
+
+                return build_product(
+                    product,
+                    nm_id
+                )
+
+            except Exception as e:
+
+                print(
+                    f"Ошибка basket {server}: {e}"
+                )
+
+                continue
+
+        return None
+
+    except Exception as e:
+
+        print("Ошибка basket API:", e)
+
+        return None
+
+
+# ============================================================
+# ПОЛУЧЕНИЕ ДАННЫХ ТОВАРА
 # ============================================================
 
 def get_product_data(nm_id):
-    """Получает данные через cloudscraper с улучшенными заголовками"""
-    
-    scraper = cloudscraper.create_scraper()
-    
-    # Улучшенные заголовки (как у реального браузера)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Connection": "keep-alive",
-        "Referer": "https://www.wildberries.by/",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site",
-    }
-    
-    # Куки как у реального пользователя
-    cookies = {
-        "locale": "ru",
-        "region": "1",
-    }
-    
-    urls = [
-        f"https://card.wb.ru/cards/detail?nm={nm_id}",
-        f"https://catalog.wb.ru/catalog/detail/v4?nm={nm_id}",
-        f"https://wbx-content-v2.wbstatic.net/ru/{nm_id}.json"
-    ]
-    
-    for url in urls:
-        try:
-            print(f"Пробую API: {url}")
-            response = scraper.get(
-                url, 
-                headers=headers, 
-                cookies=cookies,
-                timeout=30
-            )
-            print(f"Статус: {response.status_code}")
-            print(f"Ответ: {response.text[:200]}")  # Показываем первые 200 символов
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # === Для card.wb.ru ===
-                if "data" in data and "products" in data["data"]:
-                    products = data["data"]["products"]
-                    if products:
-                        p = products[0]
-                        return {
-                            'name': p.get('name', 'Название не указано'),
-                            'price': p.get('priceU', 0) / 100,
-                            'rating': p.get('rating', 0),
-                            'reviews': p.get('feedbacks', 0),
-                            'brand': p.get('brand', 'Не указан'),
-                            'category': 'Не указана',
-                            'sale_percent': 0,
-                            'vendor_code': 'Не указан',
-                            'stock': 'Нет данных',
-                            'description': 'Описание отсутствует',
-                            'url': f"https://www.wildberries.by/catalog/{nm_id}/detail.aspx"
-                        }
-                
-                # === Для wbstatic.net ===
-                if "im_name" in data:
-                    return {
-                        'name': data.get('im_name', 'Название не указано'),
-                        'price': data.get('sale_price_u', 0) / 100,
-                        'rating': data.get('rating', 0),
-                        'reviews': data.get('feedbacks', 0),
-                        'brand': 'Не указан',
-                        'category': 'Не указана',
-                        'sale_percent': 0,
-                        'vendor_code': 'Не указан',
-                        'stock': 'Нет данных',
-                        'description': 'Описание отсутствует',
-                        'url': f"https://www.wildberries.by/catalog/{nm_id}/detail.aspx"
-                    }
-                    
-        except Exception as e:
-            print(f"Ошибка при запросе к {url}: {e}")
-            continue
-    
+
+    nm_id = normalize_article(nm_id)
+
+    # Проверяем артикул
+    if not nm_id:
+
+        print("Пустой артикул")
+
+        return None
+
+    # Слишком короткий/длинный
+    if not 4 <= len(nm_id) <= 15:
+
+        print(
+            f"Некорректный артикул: {nm_id}"
+        )
+
+        return None
+
+    print("=" * 60)
+    print("ИЩЕМ ТОВАР")
+    print("Артикул:", nm_id)
+    print("=" * 60)
+
+    # ========================================================
+    # 1. Основной API
+    # ========================================================
+
+    product = get_from_wb_v4(nm_id)
+
+    if product:
+
+        print("Товар найден через API v4")
+
+        return product
+
+    # Небольшая пауза
+    time_sleep = 1
+
+    import time
+    time.sleep(time_sleep)
+
+    # ========================================================
+    # 2. Резервный API
+    # ========================================================
+
+    product = get_from_basket(nm_id)
+
+    if product:
+
+        print("Товар найден через basket API")
+
+        return product
+
+    # ========================================================
+    # Ничего не найдено
+    # ========================================================
+
+    print("=" * 60)
+    print("ТОВАР НЕ НАЙДЕН")
+    print("Артикул:", nm_id)
+    print("=" * 60)
+
     return None
+
+
+# ============================================================
+# ФОРМИРОВАНИЕ ОТВЕТА
+# ============================================================
+
+def make_answer(product_data):
+
+    name = html.escape(
+        str(product_data.get("name", "Название не указано"))
+    )
+
+    answer_text = (
+        f"📦 <b>{name}</b>\n\n"
+    )
+
+    brand = product_data.get("brand")
+
+    if brand and brand != "Не указан":
+
+        answer_text += (
+            f"🏷️ <b>Бренд:</b> "
+            f"{html.escape(str(brand))}\n"
+        )
+
+    category = product_data.get("category")
+
+    if category and category != "Не указана":
+
+        answer_text += (
+            f"📂 <b>Категория:</b> "
+            f"{html.escape(str(category))}\n"
+        )
+
+    price = product_data.get("price", 0)
+
+    answer_text += (
+        f"💰 <b>Цена:</b> "
+        f"{price:.2f} руб.\n"
+    )
+
+    sale = product_data.get(
+        "sale_percent",
+        0
+    )
+
+    if sale:
+
+        answer_text += (
+            f"🔥 <b>Скидка:</b> "
+            f"{sale}%\n"
+        )
+
+    vendor_code = product_data.get(
+        "vendor_code"
+    )
+
+    if (
+        vendor_code
+        and vendor_code != "Не указан"
+    ):
+
+        answer_text += (
+            f"🔢 <b>Артикул продавца:</b> "
+            f"{html.escape(str(vendor_code))}\n"
+        )
+
+    rating = product_data.get(
+        "rating",
+        0
+    )
+
+    reviews = product_data.get(
+        "reviews",
+        0
+    )
+
+    answer_text += (
+        f"⭐ <b>Рейтинг:</b> {rating}\n"
+        f"📝 <b>Отзывов:</b> {reviews}\n"
+    )
+
+    description = product_data.get(
+        "description"
+    )
+
+    if (
+        description
+        and description != "Описание отсутствует"
+    ):
+
+        description = str(description)
+
+        if len(description) > 500:
+            description = (
+                description[:500]
+                + "..."
+            )
+
+        description = html.escape(
+            description
+        )
+
+        answer_text += (
+            f"\n📄 <b>Описание:</b>\n"
+            f"{description}\n"
+        )
+
+    product_url = product_data.get(
+        "url"
+    )
+
+    if product_url:
+
+        answer_text += (
+            f"\n🔗 <a href='{product_url}'>"
+            f"Открыть на Wildberries"
+            f"</a>"
+        )
+
+    return answer_text
 
 
 # ============================================================
@@ -138,22 +678,18 @@ def get_product_data(nm_id):
 # ============================================================
 
 @dp.message(Command("start"))
-async def start_command(message: types.Message):
+async def start_command(
+    message: types.Message
+):
 
     await message.answer(
-        "👋 Привет! Я бот для расширенного анализа "
+        "👋 Привет! Я бот для анализа "
         "товаров на Wildberries.by.\n\n"
-        "📌 Просто отправь мне артикул товара — "
-        "и я покажу всю информацию!\n\n"
-        "📊 Я покажу:\n"
-        "• Название, бренд, категорию\n"
-        "• Цену и скидку\n"
-        "• Рейтинг и количество отзывов\n"
-        "• Артикул продавца\n"
-        "• Наличие на складах\n"
-        "• Описание товара\n\n"
-        "Пример: 2147724\n"
-        "Или: /check 12345678"
+        "📌 Отправь мне артикул товара:\n\n"
+        "Например:\n"
+        "2147724\n\n"
+        "Или:\n"
+        "/check 2147724"
     )
 
 
@@ -162,7 +698,9 @@ async def start_command(message: types.Message):
 # ============================================================
 
 @dp.message(Command("check"))
-async def check_product(message: types.Message):
+async def check_product(
+    message: types.Message
+):
 
     args = message.text.split()
 
@@ -171,21 +709,31 @@ async def check_product(message: types.Message):
         await message.answer(
             "❌ Укажи артикул.\n\n"
             "Пример:\n"
-            "/check 12345678"
+            "/check 2147724"
         )
 
         return
 
-    nm_id = args[1]
+    nm_id = normalize_article(
+        args[1]
+    )
+
+    if not nm_id:
+
+        await message.answer(
+            "❌ Артикул должен содержать цифры."
+        )
+
+        return
 
     await message.answer(
-        "🔎 Ищу товар...\n"
-        "⏳ Это займёт примерно 5-10 секунд."
+        f"🔎 Ищу товар {nm_id}...\n"
+        f"⏳ Подожди несколько секунд."
     )
 
     try:
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         product_data = await loop.run_in_executor(
             None,
@@ -196,55 +744,17 @@ async def check_product(message: types.Message):
         if not product_data:
 
             await message.answer(
-                "❌ Товар не найден.\n"
-                "Проверь артикул."
+                "❌ Товар не найден.\n\n"
+                f"Артикул: {nm_id}\n\n"
+                "Проверь артикул или попробуй "
+                "через несколько секунд."
             )
 
             return
 
-        if (
-            product_data["price"] == 0
-            and
-            product_data["name"] == "Название не указано"
-        ):
-
-            await message.answer(
-                "❌ Не удалось найти данные "
-                "на странице.\n\n"
-                "Попробуй позже."
-            )
-
-            return
-
-        answer_text = f"📦 <b>{product_data['name']}</b>\n\n"
-
-        if product_data.get('brand') and product_data['brand'] != "Не указан":
-            answer_text += f"🏷️ <b>Бренд:</b> {product_data['brand']}\n"
-
-        if product_data.get('category') and product_data['category'] != "Не указана":
-            answer_text += f"📂 <b>Категория:</b> {product_data['category']}\n"
-
-        answer_text += f"💰 <b>Цена:</b> {product_data['price']:.2f} руб.\n"
-
-        if product_data.get('sale_percent', 0) > 0:
-            answer_text += f"🔥 <b>Скидка:</b> {product_data['sale_percent']}%\n"
-
-        if product_data.get('vendor_code') and product_data['vendor_code'] != "Не указан":
-            answer_text += f"🔢 <b>Артикул продавца:</b> {product_data['vendor_code']}\n"
-
-        answer_text += f"⭐ <b>Рейтинг:</b> {product_data['rating']}\n"
-        answer_text += f"📝 <b>Отзывов:</b> {product_data['reviews']}\n"
-
-        if product_data.get('stock') and product_data['stock'] != "Нет данных":
-            answer_text += f"📦 <b>Наличие:</b> {product_data['stock']}\n"
-
-        if product_data.get('description') and product_data['description'] != "Описание отсутствует":
-            desc = product_data['description']
-            if len(desc) > 200:
-                desc = desc[:200] + "..."
-            answer_text += f"\n📄 <b>Описание:</b>\n{desc}\n"
-
-        answer_text += f"\n🔗 <a href='{product_data['url']}'>Открыть на Wildberries</a>"
+        answer_text = make_answer(
+            product_data
+        )
 
         await message.answer(
             answer_text,
@@ -254,10 +764,13 @@ async def check_product(message: types.Message):
 
     except Exception as e:
 
-        print(f"Ошибка команды /check: {e}")
+        logging.exception(
+            "Ошибка команды /check"
+        )
 
         await message.answer(
-            f"❌ Ошибка: {str(e)}"
+            "❌ Произошла ошибка при получении "
+            "данных товара."
         )
 
 
@@ -266,24 +779,38 @@ async def check_product(message: types.Message):
 # ============================================================
 
 @dp.message()
-async def auto_check(message: types.Message):
+async def auto_check(
+    message: types.Message
+):
+
+    # Если это не текст
+    if not message.text:
+
+        return
 
     text = message.text.strip()
 
-    match = re.search(r'\b(\d{4,15})\b', text)
+    # Ищем артикул от 4 до 15 цифр
+    match = re.search(
+        r"\b(\d{4,15})\b",
+        text
+    )
 
     if not match:
+
         return
 
     nm_id = match.group(1)
 
     await message.answer(
-        f"🔎 Автоматически распознал артикул: {nm_id}\n"
-        "⏳ Ищу товар... (это займёт 5-10 секунд)"
+        f"🔎 Артикул: {nm_id}\n"
+        f"⏳ Ищу товар..."
     )
 
     try:
-        loop = asyncio.get_event_loop()
+
+        loop = asyncio.get_running_loop()
+
         product_data = await loop.run_in_executor(
             None,
             get_product_data,
@@ -291,48 +818,17 @@ async def auto_check(message: types.Message):
         )
 
         if not product_data:
+
             await message.answer(
-                "❌ Товар не найден.\n"
-                "Проверь артикул."
+                "❌ Товар не найден.\n\n"
+                f"Артикул: {nm_id}"
             )
+
             return
 
-        if product_data["price"] == 0 and product_data["name"] == "Название не указано":
-            await message.answer(
-                "❌ Не удалось найти данные на странице.\n"
-                "Попробуй позже."
-            )
-            return
-
-        answer_text = f"📦 <b>{product_data['name']}</b>\n\n"
-
-        if product_data.get('brand') and product_data['brand'] != "Не указан":
-            answer_text += f"🏷️ <b>Бренд:</b> {product_data['brand']}\n"
-
-        if product_data.get('category') and product_data['category'] != "Не указана":
-            answer_text += f"📂 <b>Категория:</b> {product_data['category']}\n"
-
-        answer_text += f"💰 <b>Цена:</b> {product_data['price']:.2f} руб.\n"
-
-        if product_data.get('sale_percent', 0) > 0:
-            answer_text += f"🔥 <b>Скидка:</b> {product_data['sale_percent']}%\n"
-
-        if product_data.get('vendor_code') and product_data['vendor_code'] != "Не указан":
-            answer_text += f"🔢 <b>Артикул продавца:</b> {product_data['vendor_code']}\n"
-
-        answer_text += f"⭐ <b>Рейтинг:</b> {product_data['rating']}\n"
-        answer_text += f"📝 <b>Отзывов:</b> {product_data['reviews']}\n"
-
-        if product_data.get('stock') and product_data['stock'] != "Нет данных":
-            answer_text += f"📦 <b>Наличие:</b> {product_data['stock']}\n"
-
-        if product_data.get('description') and product_data['description'] != "Описание отсутствует":
-            desc = product_data['description']
-            if len(desc) > 200:
-                desc = desc[:200] + "..."
-            answer_text += f"\n📄 <b>Описание:</b>\n{desc}\n"
-
-        answer_text += f"\n🔗 <a href='{product_data['url']}'>Открыть на Wildberries</a>"
+        answer_text = make_answer(
+            product_data
+        )
 
         await message.answer(
             answer_text,
@@ -341,7 +837,15 @@ async def auto_check(message: types.Message):
         )
 
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
+
+        logging.exception(
+            "Ошибка автоматического поиска"
+        )
+
+        await message.answer(
+            "❌ Произошла ошибка при получении "
+            "данных товара."
+        )
 
 
 # ============================================================
@@ -349,20 +853,66 @@ async def auto_check(message: types.Message):
 # ============================================================
 
 async def main():
-    print("🚀 Бот запускается...")
-    print("📌 Отправь артикул (число) или /check 12345678")
-    await bot.delete_webhook(drop_pending_updates=True)
+
+    print("=" * 60)
+    print("BOT STARTING")
+    print("=" * 60)
+
+    print(
+        "Отправь в Telegram:"
+    )
+
+    print(
+        "/check 2147724"
+    )
+
+    # Удаляем старый webhook
+    await bot.delete_webhook(
+        drop_pending_updates=True
+    )
+
+    # Запускаем Telegram polling
     await dp.start_polling(bot)
 
 
+# ============================================================
+# START
+# ============================================================
+
 if __name__ == "__main__":
-    # Запускаем Flask в отдельном потоке для Render
+
+    # ========================================================
+    # FLASK ДЛЯ RENDER
+    # ========================================================
+
     def run_flask():
-        port = int(os.environ.get("PORT", 8080))
-        web_app.run(host="0.0.0.0", port=port)
-    
-    thread = threading.Thread(target=run_flask)
-    thread.start()
-    
-    # Запускаем бота
+
+        port = int(
+            os.environ.get(
+                "PORT",
+                8080
+            )
+        )
+
+        print(
+            f"Flask запускается на порту {port}"
+        )
+
+        web_app.run(
+            host="0.0.0.0",
+            port=port
+        )
+
+
+    flask_thread = threading.Thread(
+        target=run_flask,
+        daemon=True
+    )
+
+    flask_thread.start()
+
+    # ========================================================
+    # TELEGRAM BOT
+    # ========================================================
+
     asyncio.run(main())
